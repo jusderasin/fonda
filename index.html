@@ -24,6 +24,7 @@ body{background:#070910;color:#e2e8f0;font-family:'Syne',sans-serif;overflow:hid
 @keyframes fade-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes scanline{0%{top:-20%}100%{top:110%}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
 .live-blink{animation:blink 1.2s step-end infinite}
 .new-pulse{animation:pulse-new 2s ease-in-out infinite}
 .slide-in{animation:slide-in .35s ease-out}
@@ -34,12 +35,13 @@ body{background:#070910;color:#e2e8f0;font-family:'Syne',sans-serif;overflow:hid
 ::-webkit-scrollbar{width:3px;height:3px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:#1e2535;border-radius:2px}
+.skeleton{background:linear-gradient(90deg,#0d1220 25%,#151d2e 50%,#0d1220 75%);background-size:200% 100%;animation:shimmer 1.5s infinite}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
 // ── SUPABASE ──
 const { createClient } = supabase;
@@ -48,7 +50,7 @@ const sb = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ3YmxsaW5za3FibHNpZmFhd3d1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA5MzYyNjcsImV4cCI6MjA5NjUxMjI2N30.K8wtnfYIqADUasHTaAalaxcS1LQPl2xeaTo3BY2kCjQ'
 );
 
-// ── DATA ──
+// ── STATIC DATA ──
 const TICKER_DATA = [
   {s:'EUR/USD',p:'1.0842',c:'+0.0023',pct:'+0.21%',pos:true},
   {s:'GBP/USD',p:'1.2634',c:'-0.0041',pct:'-0.32%',pos:false},
@@ -62,7 +64,7 @@ const TICKER_DATA = [
   {s:'SP500',p:'5,248',c:'+12',pct:'+0.23%',pos:true},
 ];
 
-const NEWS = [
+const NEWS_MOCK = [
   {id:1,time:'14:32:11',impact:'HIGH',type:'CB',title:"Fed's Powell: Labor market remains resilient, further data needed before rate cuts",tags:['USD','SP500','NQ'],isNew:true,isRelease:false,ai:{pairs:{'EUR/USD':['Bearish','Dollar strength on hawkish Fed tone'],'USD/JPY':['Bullish','Rate differential widens vs BOJ'],'GOLD':['Bearish','Higher-for-longer rates weigh on bullion'],'NQ':['Bearish','Tech valuations pressured by elevated yields']},conf:'HIGH',level:'1.0820'}},
   {id:2,time:'13:45:02',impact:'HIGH',type:'RELEASE',title:'🇺🇸 US CPI MoM',tags:['USD'],isNew:true,isRelease:true,actual:'3.1%',forecast:'3.2%',previous:'3.4%',beat:true,ai:{pairs:{'EUR/USD':['Bullish','Softer CPI eases dollar pressure'],'USD/JPY':['Bearish','Rate cut bets revived on cool CPI'],'GOLD':['Bullish','Inflation cooling boosts gold appeal'],'NQ':['Bullish','Rate-sensitive tech rallies on data']},conf:'HIGH',level:'2350'}},
   {id:3,time:'13:21:44',impact:'MEDIUM',type:'NEWS',title:'OPEC+ considering extending output cuts through Q3 2026',tags:['OIL','USD'],isNew:true,isRelease:false},
@@ -102,15 +104,44 @@ const BANKS = [
   {id:'RBNZ',name:'Reserve Bank NZ',flag:'🇳🇿',rate:'4.25%',last:'Feb 19',decision:'-50bps',next:'Apr 9',bias:'DOVISH'},
 ];
 
+// Charts — symboles corrigés et vérifiés TradingView free
 const CHARTS = [
-  {label:'EUR/USD',tv:'FX:EURUSD'},{label:'GBP/USD',tv:'FX:GBPUSD'},
-  {label:'GOLD',tv:'COMEX:GC1!'},{label:'BTC',tv:'BINANCE:BTCUSDT'},
-  {label:'NQ',tv:'CME_MINI:NQ1!'},{label:'WTI',tv:'NYMEX:CL1!'},{label:'DXY',tv:'TVC:DXY'},
+  {label:'EUR/USD', tv:'FX:EURUSD'},
+  {label:'GBP/USD', tv:'FX:GBPUSD'},
+  {label:'GOLD',    tv:'TVC:GOLD'},
+  {label:'BTC',     tv:'BINANCE:BTCUSDT'},
+  {label:'NQ',      tv:'NASDAQ:QQQ'},   // QQQ proxy accessible sans compte TV
+  {label:'WTI OIL', tv:'TVC:USOIL'},    // TVC:USOIL fonctionne sans compte
+  {label:'DXY',     tv:'TVC:DXY'},
 ];
 
-const TV = [
-  {name:'Bloomberg',id:'dp8PhLsUcFE'},{name:'CNBC',id:'nQeHH6wHJic'},
-  {name:'Yahoo Finance',id:'l2BCG5K_lKA'},{name:'Cheddar',id:'LNGG_WlLLGM'},
+// TV — streams YouTube financiers actifs (vérifiés juin 2025)
+// On utilise des live streams connus stables
+const TV_STREAMS = [
+  {
+    name:'Bloomberg TV',
+    url:'https://www.youtube.com/embed/live_stream?channel=UCIALMKvObZNtJ6AmdCLP7Lg&autoplay=0',
+    fallback:'https://www.youtube.com/embed/dp8PhLsUcFE',
+    desc:'Bloomberg Markets Live'
+  },
+  {
+    name:'CNBC',
+    url:'https://www.youtube.com/embed/live_stream?channel=UCrp_UI8XtuYfpiqluWLD96A&autoplay=0',
+    fallback:'https://www.youtube.com/embed/M68fFaN2qc0',
+    desc:'CNBC Live Stream'
+  },
+  {
+    name:'Reuters',
+    url:'https://www.youtube.com/embed/live_stream?channel=UCaIUCP1UYCe5CkCqnzXSfAA&autoplay=0',
+    fallback:'https://www.youtube.com/embed/INtaB4FQXRY',
+    desc:'Reuters News Live'
+  },
+  {
+    name:'Yahoo Finance',
+    url:'https://www.youtube.com/embed/live_stream?channel=UCEAZeUIeJs0IjQiqTCdVSIg&autoplay=0',
+    fallback:'https://www.youtube.com/embed/l2BCG5K_lKA',
+    desc:'Yahoo Finance Live'
+  },
 ];
 
 const EXTRA = [
@@ -132,6 +163,139 @@ function useCountdown(hhmm){
     tick();const id=setInterval(tick,1000);return()=>clearInterval(id);
   },[hhmm]);
   return cd;
+}
+
+// ── AUTH GATE (page de connexion obligatoire) ──
+function AuthGate({onAuth}){
+  const [mode,setMode]=useState('login');
+  const [email,setEmail]=useState('');
+  const [pw,setPw]=useState('');
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState('');
+  const [ok,setOk]=useState('');
+
+  const submit=async(e)=>{
+    e.preventDefault();setErr('');setOk('');setLoading(true);
+    try{
+      if(mode==='register'){
+        const{data,error}=await sb.auth.signUp({email,password:pw});
+        if(error)throw error;
+        // Auto-login après inscription
+        if(data.user && !data.user.email_confirmed_at){
+          setOk('Compte créé ! Vérifie ton email pour confirmer, puis connecte-toi.');
+          setMode('login');
+        } else if(data.session){
+          onAuth(data.user);
+        } else {
+          setOk('Compte créé ! Connecte-toi maintenant.');
+          setMode('login');
+        }
+      } else if(mode==='login'){
+        const{data,error}=await sb.auth.signInWithPassword({email,password:pw});
+        if(error)throw error;
+        onAuth(data.user);
+      } else {
+        const{error}=await sb.auth.resetPasswordForEmail(email);
+        if(error)throw error;
+        setOk('Email de reset envoyé !');
+      }
+    }catch(e){setErr(e.message);}finally{setLoading(false);}
+  };
+
+  return(
+    <div className="fixed inset-0 flex items-center justify-center" style={{background:'#070910'}}>
+      {/* Background grid effect */}
+      <div className="absolute inset-0 pointer-events-none" style={{
+        backgroundImage:'linear-gradient(rgba(0,212,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,.03) 1px,transparent 1px)',
+        backgroundSize:'40px 40px'
+      }}/>
+      {/* Glow */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full pointer-events-none" style={{background:'radial-gradient(circle,rgba(0,212,255,.06) 0%,transparent 70%)'}}/>
+
+      <div className="relative w-full max-w-md mx-4 fade-up">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <div className="w-2 h-2 rounded-full bg-cyan-400 live-blink"/>
+            <span className="mono font-black text-xl tracking-[.3em] text-cyan-400">MACRO</span>
+            <span className="mono font-black text-xl tracking-[.3em] text-slate-200">TERMINAL</span>
+          </div>
+          <p className="mono text-xs text-slate-600">Intelligence de marché en temps réel</p>
+          <div className="flex items-center justify-center gap-4 mt-3 text-[10px] mono text-slate-600">
+            <span>📰 News Feed</span><span>📊 Charts</span><span>🏦 Central Banks</span><span>📅 Calendar</span>
+          </div>
+        </div>
+
+        {/* Card */}
+        <div style={{background:'rgba(13,18,32,.95)',border:'1px solid rgba(0,212,255,.15)',borderRadius:16,overflow:'hidden'}}>
+          {/* Tabs */}
+          <div className="flex" style={{borderBottom:'1px solid rgba(255,255,255,.06)'}}>
+            {['login','register'].map(m=>(
+              <button key={m} onClick={()=>{setMode(m);setErr('');setOk('');}}
+                className="flex-1 py-3.5 mono text-xs font-bold transition-all"
+                style={mode===m?{color:'#00d4ff',borderBottom:'2px solid #00d4ff',background:'rgba(0,212,255,.05)'}:{color:'#475569'}}>
+                {m==='login'?'CONNEXION':'INSCRIPTION'}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={submit} className="p-6 space-y-4">
+            <div>
+              <label className="block mono text-[10px] text-slate-500 mb-1.5 uppercase tracking-widest">Email</label>
+              <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required
+                placeholder="trader@example.com"
+                className="w-full mono text-sm px-3 py-2.5 rounded-lg outline-none transition-all"
+                style={{background:'#080c18',border:'1px solid rgba(255,255,255,.08)',color:'#e2e8f0'}}
+                onFocus={e=>e.target.style.borderColor='rgba(0,212,255,.5)'}
+                onBlur={e=>e.target.style.borderColor='rgba(255,255,255,.08)'}/>
+            </div>
+            {mode!=='reset'&&(
+              <div>
+                <label className="block mono text-[10px] text-slate-500 mb-1.5 uppercase tracking-widest">Mot de passe</label>
+                <input type="password" value={pw} onChange={e=>setPw(e.target.value)} required={mode!=='reset'}
+                  placeholder="••••••••"
+                  className="w-full mono text-sm px-3 py-2.5 rounded-lg outline-none transition-all"
+                  style={{background:'#080c18',border:'1px solid rgba(255,255,255,.08)',color:'#e2e8f0'}}
+                  onFocus={e=>e.target.style.borderColor='rgba(0,212,255,.5)'}
+                  onBlur={e=>e.target.style.borderColor='rgba(255,255,255,.08)'}/>
+              </div>
+            )}
+
+            {err&&<div className="mono text-xs text-red-400 px-3 py-2 rounded-lg" style={{background:'rgba(255,59,59,.1)',border:'1px solid rgba(255,59,59,.2)'}}>{err}</div>}
+            {ok&&<div className="mono text-xs text-emerald-400 px-3 py-2 rounded-lg" style={{background:'rgba(0,255,136,.08)',border:'1px solid rgba(0,255,136,.2)'}}>{ok}</div>}
+
+            <button type="submit" disabled={loading}
+              className="w-full py-3 rounded-lg mono text-sm font-black transition-all"
+              style={{background:loading?'#0e1a2e':'linear-gradient(135deg,#0077b6,#00b4d8)',color:loading?'#4a6080':'#fff',letterSpacing:'.15em'}}>
+              {loading?'...':(mode==='login'?'SE CONNECTER':mode==='register'?'CRÉER MON COMPTE':'ENVOYER')}
+            </button>
+
+            {mode==='login'&&(
+              <button type="button" onClick={()=>{setMode('reset');setErr('');setOk('');}}
+                className="w-full text-center mono text-[10px] text-slate-600 hover:text-slate-400 transition-colors">
+                Mot de passe oublié ?
+              </button>
+            )}
+            {mode==='reset'&&(
+              <button type="button" onClick={()=>{setMode('login');setErr('');setOk('');}}
+                className="w-full text-center mono text-[10px] text-slate-600 hover:text-cyan-400 transition-colors">
+                ← Retour à la connexion
+              </button>
+            )}
+          </form>
+
+          {/* Disclaimer news */}
+          <div className="px-6 pb-5 pt-0">
+            <div className="p-3 rounded-lg" style={{background:'rgba(255,255,255,.03)',border:'1px solid rgba(255,255,255,.05)'}}>
+              <p className="mono text-[9px] text-slate-600 leading-relaxed">
+                ⚠️ <span className="text-slate-500">Les news affichées sont des données mockées à des fins de démonstration.</span> Les graphiques TradingView sont en temps réel. Les streams TV sont des flux YouTube publics (disponibilité variable).
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── BADGE ──
@@ -163,7 +327,7 @@ function Ticker(){
 }
 
 // ── TOPBAR ──
-function Topbar({user,onAuth,onLogout,squawk,setSquawk}){
+function Topbar({user,onLogout,squawk,setSquawk}){
   const [time,setTime]=useState('');
   useEffect(()=>{const tick=()=>setTime(new Date().toLocaleTimeString('en-GB',{hour12:false,timeZone:'Europe/Paris'})+' CET');tick();const id=setInterval(tick,1000);return()=>clearInterval(id);},[]);
   return(
@@ -184,15 +348,15 @@ function Topbar({user,onAuth,onLogout,squawk,setSquawk}){
           className={`mono text-[10px] px-2 py-1 rounded border transition-all ${squawk?'text-cyan-400 border-cyan-800 bg-cyan-950/40':'text-slate-500 border-slate-800'}`}>
           🔊 {squawk?'ON':'OFF'}
         </button>
-        {user?(
-          <div className="flex items-center gap-2">
-            <span className="mono text-[10px] text-cyan-400 border border-cyan-900 px-2 py-1 rounded">{user.email?.split('@')[0]}</span>
-            <button onClick={onLogout} className="mono text-[10px] text-slate-500 hover:text-red-400 transition-colors px-2 py-1 rounded border border-slate-800 hover:border-red-900">OUT</button>
+        <div className="flex items-center gap-1.5">
+          <div className="w-6 h-6 rounded-full bg-cyan-950 border border-cyan-800 flex items-center justify-center mono text-[10px] text-cyan-400 font-bold">
+            {user?.email?.[0]?.toUpperCase()}
           </div>
-        ):(
-          <button onClick={onAuth} className="mono text-xs px-3 py-1 rounded font-bold"
-            style={{background:'linear-gradient(135deg,#0077b6,#00b4d8)',color:'#fff'}}>SIGN IN</button>
-        )}
+          <span className="mono text-[10px] text-cyan-400 hidden lg:block">{user?.email?.split('@')[0]}</span>
+          <button onClick={onLogout} className="mono text-[10px] text-slate-600 hover:text-red-400 transition-colors px-2 py-1 rounded border border-slate-800/50 hover:border-red-900">
+            ⏻
+          </button>
+        </div>
       </div>
     </header>
   );
@@ -242,6 +406,7 @@ function NewsCard({item,expanded,onExpand}){
                 <span className="text-sm">{TICON[item.type]||'📡'}</span>
                 {item.isNew&&<span className="mono text-[9px] px-1.5 py-0.5 rounded new-pulse"
                   style={{background:'rgba(0,255,136,.1)',border:'1px solid rgba(0,255,136,.3)',color:'#00ff88'}}>NEW</span>}
+                <span className="mono text-[9px] text-amber-600/60 border border-amber-900/30 px-1 rounded">MOCK</span>
               </div>
               {item.isRelease?(
                 <p className="text-sm font-semibold text-slate-100 leading-snug">
@@ -319,6 +484,7 @@ function NewsFeed({news}){
               {f==='HIGH'?'🔴 ':f==='MEDIUM'?'🟡 ':f==='LOW'?'⚪ ':''}{f}
             </button>
           ))}
+          <span className="mono text-[9px] text-amber-700 border border-amber-900/40 px-2 py-0.5 rounded ml-1">⚠ DONNÉES MOCKÉES</span>
           <span className="ml-auto mono text-[10px] text-slate-600">{filtered.length} items</span>
         </div>
         <div className="flex gap-1 flex-wrap">
@@ -337,7 +503,6 @@ function NewsFeed({news}){
 
 // ── CALENDAR ──
 function CDCell({time}){const cd=useCountdown(time);return <span className="mono text-[10px] text-amber-400">{cd}</span>;}
-
 function CalendarTab(){
   const days=['LUN 3','MAR 4','MER 5','JEU 6','VEN 7'];
   const [day,setDay]=useState(3);
@@ -353,27 +518,23 @@ function CalendarTab(){
       </div>
       <div className="flex-1 overflow-y-auto">
         <table className="w-full mono text-xs border-collapse">
-          <thead>
-            <tr style={{background:'rgba(0,0,0,.4)',borderBottom:'1px solid rgba(255,255,255,.06)'}}>
-              {['TIME','','EVENT','IMPACT','PREV','FCST','ACTUAL','COUNTDOWN'].map(h=>(
-                <th key={h} className="px-3 py-2.5 text-left text-slate-600 font-medium">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {CAL.map(ev=>(
-              <tr key={ev.id} style={{borderBottom:'1px solid rgba(255,255,255,.04)',background:ev.status==='next'?'rgba(239,68,68,.06)':'transparent',opacity:ev.status==='past'?0.4:1,borderLeft:ev.status==='next'?'2px solid #ef4444':'2px solid transparent'}}>
-                <td className="px-3 py-2.5 text-slate-300">{ev.time}</td>
-                <td className="px-2 py-2.5 text-lg">{ev.flag}</td>
-                <td className="px-3 py-2.5 text-slate-200 text-xs" style={{fontFamily:'Syne,sans-serif'}}>{ev.event}</td>
-                <td className="px-3 py-2.5"><Badge impact={ev.impact}/></td>
-                <td className="px-3 py-2.5 text-slate-500">{ev.prev}</td>
-                <td className="px-3 py-2.5 text-slate-500">{ev.fcst}</td>
-                <td className="px-3 py-2.5">{ev.actual?<span className={ev.beat?'text-emerald-400':'text-red-400'}>{ev.actual} {ev.beat?'✓':'✗'}</span>:<span className="text-slate-700">—</span>}</td>
-                <td className="px-3 py-2.5">{ev.status==='past'?<span className="text-emerald-400 text-[10px]">✓ Released</span>:ev.status==='next'?<CDCell time={ev.time}/>:<span className="text-slate-700">—</span>}</td>
-              </tr>
+          <thead><tr style={{background:'rgba(0,0,0,.4)',borderBottom:'1px solid rgba(255,255,255,.06)'}}>
+            {['TIME','','EVENT','IMPACT','PREV','FCST','ACTUAL','COUNTDOWN'].map(h=>(
+              <th key={h} className="px-3 py-2.5 text-left text-slate-600 font-medium">{h}</th>
             ))}
-          </tbody>
+          </tr></thead>
+          <tbody>{CAL.map(ev=>(
+            <tr key={ev.id} style={{borderBottom:'1px solid rgba(255,255,255,.04)',background:ev.status==='next'?'rgba(239,68,68,.06)':'transparent',opacity:ev.status==='past'?0.4:1,borderLeft:ev.status==='next'?'2px solid #ef4444':'2px solid transparent'}}>
+              <td className="px-3 py-2.5 text-slate-300">{ev.time}</td>
+              <td className="px-2 py-2.5 text-lg">{ev.flag}</td>
+              <td className="px-3 py-2.5 text-slate-200 text-xs" style={{fontFamily:'Syne,sans-serif'}}>{ev.event}</td>
+              <td className="px-3 py-2.5"><Badge impact={ev.impact}/></td>
+              <td className="px-3 py-2.5 text-slate-500">{ev.prev}</td>
+              <td className="px-3 py-2.5 text-slate-500">{ev.fcst}</td>
+              <td className="px-3 py-2.5">{ev.actual?<span className={ev.beat?'text-emerald-400':'text-red-400'}>{ev.actual} {ev.beat?'✓':'✗'}</span>:<span className="text-slate-700">—</span>}</td>
+              <td className="px-3 py-2.5">{ev.status==='past'?<span className="text-emerald-400 text-[10px]">✓ Released</span>:ev.status==='next'?<CDCell time={ev.time}/>:<span className="text-slate-700">—</span>}</td>
+            </tr>
+          ))}</tbody>
         </table>
       </div>
     </div>
@@ -409,7 +570,7 @@ function MacroHub(){
     <div className="h-full grid grid-cols-3 gap-2 p-3 overflow-hidden">
       <div className="flex flex-col gap-2 overflow-y-auto">
         <p className="mono text-[10px] text-cyan-400 uppercase tracking-widest">📉 Macro Intel</p>
-        {NEWS.filter(n=>n.impact==='HIGH').slice(0,6).map(n=>(
+        {NEWS_MOCK.filter(n=>n.impact==='HIGH').slice(0,6).map(n=>(
           <div key={n.id} className="p-2.5 rounded" style={{background:'#0d1220',border:'1px solid rgba(255,255,255,.05)'}}>
             <div className="flex items-center gap-2 mb-1"><Badge impact={n.impact}/><span className="mono text-[9px] text-slate-600">{n.time}</span></div>
             <p className="text-xs text-slate-200 leading-snug">{n.title}</p>
@@ -476,7 +637,7 @@ function CentralBanks(){
   );
 }
 
-// ── CHARTS ──
+// ── CHARTS (symboles corrigés) ──
 function Charts(){
   const [a,setA]=useState(0);const [split,setSplit]=useState(false);const [b,setB]=useState(1);
   return(
@@ -492,7 +653,9 @@ function Charts(){
       <div className="flex flex-1 overflow-hidden gap-1 p-1.5">
         <div className={`flex ${split?'gap-1':''} flex-1 overflow-hidden`}>
           <div className="flex-1 rounded overflow-hidden" style={{border:'1px solid rgba(255,255,255,.06)'}}>
-            <iframe src={`https://s.tradingview.com/widgetembed/?symbol=${CHARTS[a].tv}&interval=15&theme=dark&style=1&locale=en`} className="w-full h-full" title="c1" allow="clipboard-write"/>
+            <iframe
+              src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(CHARTS[a].tv)}&interval=15&theme=dark&style=1&locale=en&hide_top_toolbar=0&hide_legend=0&save_image=0`}
+              className="w-full h-full" title="c1" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups"/>
           </div>
           {split&&(
             <div className="flex flex-col flex-1 gap-1">
@@ -503,14 +666,16 @@ function Charts(){
                 ))}
               </div>
               <div className="flex-1 rounded overflow-hidden" style={{border:'1px solid rgba(255,255,255,.06)'}}>
-                <iframe src={`https://s.tradingview.com/widgetembed/?symbol=${CHARTS[b].tv}&interval=15&theme=dark&style=1&locale=en`} className="w-full h-full" title="c2" allow="clipboard-write"/>
+                <iframe
+                  src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(CHARTS[b].tv)}&interval=15&theme=dark&style=1&locale=en`}
+                  className="w-full h-full" title="c2" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups"/>
               </div>
             </div>
           )}
         </div>
         <div className="w-44 shrink-0 overflow-y-auto space-y-1.5 pl-1">
           <p className="mono text-[9px] text-slate-600 uppercase tracking-widest">Related</p>
-          {NEWS.slice(0,6).map(n=>(
+          {NEWS_MOCK.slice(0,6).map(n=>(
             <div key={n.id} className="p-2 rounded" style={{background:'#0d1220',border:'1px solid rgba(255,255,255,.05)'}}
               onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(0,212,255,.2)'}
               onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,.05)'}>
@@ -564,14 +729,18 @@ function Earnings(){
   );
 }
 
-// ── TV ──
+// ── FINANCIAL TV (streams corrigés) ──
 function FinancialTV(){
   const [ch,setCh]=useState(0);
+  const [tvErr,setTvErr]=useState(false);
+
+  useEffect(()=>{ setTvErr(false); },[ch]);
+
   return(
     <div className="h-full flex flex-col">
       <div className="shrink-0 px-3 py-2 flex items-center gap-2 flex-wrap" style={{borderBottom:'1px solid rgba(255,255,255,.05)'}}>
         <span className="mono text-[10px] text-slate-500 mr-1">📺 LIVE STREAMS</span>
-        {TV.map((c,i)=>(
+        {TV_STREAMS.map((c,i)=>(
           <button key={i} onClick={()=>setCh(i)}
             className={`mono text-[10px] px-2.5 py-1 rounded border transition-all ${ch===i?'text-cyan-400 border-cyan-800 bg-cyan-950/40':'text-slate-500 border-slate-800'}`}>{c.name}</button>
         ))}
@@ -580,104 +749,40 @@ function FinancialTV(){
         <div className="flex-1 rounded overflow-hidden relative tv-scanline" style={{border:'1px solid rgba(0,212,255,.15)',background:'#000'}}>
           <div className="absolute top-2 left-2 z-10 flex items-center gap-2">
             <span className="live-blink w-2 h-2 rounded-full bg-red-500 inline-block"/>
-            <span className="mono text-[10px] text-slate-300">{TV[ch].name}</span>
+            <span className="mono text-[10px] text-slate-300">{TV_STREAMS[ch].name}</span>
+            <span className="mono text-[9px] text-slate-600">{TV_STREAMS[ch].desc}</span>
           </div>
-          <iframe src={`https://www.youtube.com/embed/${TV[ch].id}?controls=1&rel=0&modestbranding=1`}
-            className="w-full h-full" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope" allowFullScreen title={TV[ch].name}/>
-        </div>
-        <div className="shrink-0 p-2 rounded space-y-1" style={{background:'#0d1220',border:'1px solid rgba(255,255,255,.05)',height:90}}>
-          <p className="mono text-[9px] text-slate-600 uppercase tracking-widest mb-1">Market Headlines</p>
-          {NEWS.filter(n=>n.impact==='HIGH').slice(0,3).map(n=>(
-            <div key={n.id} className="mono text-[10px] text-slate-400 leading-tight">
-              <span className="text-red-400 mr-1">●</span>{n.title.slice(0,70)}…
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── AUTH MODAL ──
-function AuthModal({onClose,onAuth}){
-  const [mode,setMode]=useState('login');
-  const [email,setEmail]=useState('');
-  const [pw,setPw]=useState('');
-  const [loading,setLoading]=useState(false);
-  const [err,setErr]=useState('');
-  const [ok,setOk]=useState('');
-
-  const submit=async(e)=>{
-    e.preventDefault();setErr('');setOk('');setLoading(true);
-    try{
-      if(mode==='register'){
-        const{error}=await sb.auth.signUp({email,password:pw});
-        if(error)throw error;
-        setOk('Compte créé ! Vérifie ton email.');
-      }else if(mode==='login'){
-        const{data,error}=await sb.auth.signInWithPassword({email,password:pw});
-        if(error)throw error;
-        onAuth(data.user);onClose();
-      }else{
-        const{error}=await sb.auth.resetPasswordForEmail(email);
-        if(error)throw error;
-        setOk('Email de reset envoyé !');
-      }
-    }catch(e){setErr(e.message);}finally{setLoading(false);}
-  };
-
-  return(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center" style={{background:'rgba(7,9,16,.92)',backdropFilter:'blur(8px)'}}>
-      <div className="w-full max-w-sm mx-4 fade-up" style={{background:'#0d1220',border:'1px solid rgba(0,212,255,.2)',borderRadius:12,overflow:'hidden'}}>
-        <div className="px-6 pt-6 pb-4" style={{borderBottom:'1px solid rgba(255,255,255,.06)'}}>
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-2">
-              <span className="text-cyan-400 font-bold mono text-sm tracking-widest">MACRO</span>
-              <span className="text-slate-100 font-bold mono text-sm tracking-widest">TERMINAL</span>
-            </div>
-            <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-lg">✕</button>
-          </div>
-          <p className="text-slate-500 mono text-xs">{mode==='login'?'Connexion':mode==='register'?'Créer un compte':'Reset mot de passe'}</p>
-        </div>
-        <form onSubmit={submit} className="p-6 space-y-4">
-          <div>
-            <label className="block mono text-xs text-slate-400 mb-1.5">EMAIL</label>
-            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="trader@example.com"
-              className="w-full mono text-sm px-3 py-2.5 rounded outline-none"
-              style={{background:'#080c18',border:'1px solid rgba(255,255,255,.08)',color:'#e2e8f0'}}
-              onFocus={e=>e.target.style.borderColor='rgba(0,212,255,.5)'}
-              onBlur={e=>e.target.style.borderColor='rgba(255,255,255,.08)'}/>
-          </div>
-          {mode!=='reset'&&(
-            <div>
-              <label className="block mono text-xs text-slate-400 mb-1.5">PASSWORD</label>
-              <input type="password" value={pw} onChange={e=>setPw(e.target.value)} required placeholder="••••••••"
-                className="w-full mono text-sm px-3 py-2.5 rounded outline-none"
-                style={{background:'#080c18',border:'1px solid rgba(255,255,255,.08)',color:'#e2e8f0'}}
-                onFocus={e=>e.target.style.borderColor='rgba(0,212,255,.5)'}
-                onBlur={e=>e.target.style.borderColor='rgba(255,255,255,.08)'}/>
+          {!tvErr ? (
+            <iframe
+              key={ch}
+              src={TV_STREAMS[ch].url}
+              className="w-full h-full"
+              allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope"
+              allowFullScreen
+              title={TV_STREAMS[ch].name}
+              onError={()=>setTvErr(true)}
+            />
+          ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center gap-4">
+              <div className="text-4xl">📺</div>
+              <p className="mono text-sm text-slate-400">Stream non disponible</p>
+              <p className="mono text-xs text-slate-600">YouTube restreint l'embed de certains streams en direct</p>
+              <a href={`https://www.youtube.com/watch?v=${TV_STREAMS[ch].url.split('v=')[1]}`}
+                target="_blank" rel="noreferrer"
+                className="mono text-xs px-4 py-2 rounded border border-cyan-800 text-cyan-400 hover:bg-cyan-950/40 transition-colors">
+                ▶ Ouvrir sur YouTube →
+              </a>
             </div>
           )}
-          {err&&<div className="mono text-xs text-red-400 px-3 py-2 rounded" style={{background:'rgba(255,59,59,.1)',border:'1px solid rgba(255,59,59,.2)'}}>{err}</div>}
-          {ok&&<div className="mono text-xs text-green-400 px-3 py-2 rounded" style={{background:'rgba(0,255,136,.08)',border:'1px solid rgba(0,255,136,.2)'}}>{ok}</div>}
-          <button type="submit" disabled={loading} className="w-full py-2.5 rounded mono text-sm font-bold"
-            style={{background:loading?'#0e1a2e':'linear-gradient(135deg,#00b4d8,#0077b6)',color:loading?'#4a6080':'#fff'}}>
-            {loading?'Chargement…':mode==='login'?'SE CONNECTER':mode==='register'?'CRÉER LE COMPTE':'ENVOYER LE RESET'}
-          </button>
-          <div className="flex items-center justify-between pt-1">
-            {mode==='login'?(
-              <>
-                <button type="button" onClick={()=>{setMode('register');setErr('');setOk('');}} className="mono text-xs text-slate-500 hover:text-cyan-400">Pas encore de compte →</button>
-                <button type="button" onClick={()=>{setMode('reset');setErr('');setOk('');}} className="mono text-xs text-slate-500 hover:text-slate-300">Mot de passe oublié</button>
-              </>
-            ):(
-              <button type="button" onClick={()=>{setMode('login');setErr('');setOk('');}} className="mono text-xs text-slate-500 hover:text-cyan-400">← Retour</button>
-            )}
-          </div>
-        </form>
-        <div className="px-6 pb-6">
-          <button onClick={onClose} className="w-full py-2 rounded mono text-xs text-slate-500 hover:text-slate-300"
-            style={{border:'1px solid rgba(255,255,255,.05)'}}>Continuer en mode invité</button>
+        </div>
+
+        {/* Info box */}
+        <div className="shrink-0 p-3 rounded" style={{background:'#0d1220',border:'1px solid rgba(255,204,0,.15)',height:80}}>
+          <p className="mono text-[9px] text-amber-600 mb-1">⚠ À PROPOS DES STREAMS TV</p>
+          <p className="mono text-[9px] text-slate-500 leading-relaxed">
+            YouTube bloque l'embed des lives directs. Si la vidéo ne charge pas, clique sur le lien pour ouvrir directement sur YouTube. 
+            Les graphiques TradingView ci-dessous sont eux bien en temps réel.
+          </p>
         </div>
       </div>
     </div>
@@ -685,7 +790,7 @@ function AuthModal({onClose,onAuth}){
 }
 
 // ── SETTINGS ──
-function Settings({user,onAuth}){
+function Settings({user,onLogout}){
   const [al,setAl]=useState(true);const [ar,setAr]=useState(true);const [sq,setSq]=useState(false);
   const Toggle=({v,s})=>(
     <button onClick={()=>s(x=>!x)} className="w-9 h-5 rounded-full relative transition-colors" style={{background:v?'#0077b6':'#1a2035'}}>
@@ -695,19 +800,17 @@ function Settings({user,onAuth}){
   return(
     <div className="h-full overflow-y-auto p-6">
       <h2 className="mono text-sm font-bold text-slate-100 mb-6">⚙️ Paramètres</h2>
-      <div className="mb-6 p-4 rounded max-w-sm" style={{background:'#0d1220',border:'1px solid rgba(255,255,255,.06)'}}>
-        <p className="mono text-[10px] text-cyan-400 uppercase tracking-widest mb-3">Compte Supabase</p>
-        {user?(
-          <div className="flex items-center justify-between">
-            <div><p className="mono text-xs text-slate-200">{user.email}</p><p className="mono text-[10px] text-slate-500">Plan: Free</p></div>
-            <div className="w-8 h-8 rounded-full bg-cyan-950 border border-cyan-800 flex items-center justify-center mono text-xs text-cyan-400">{user.email?.[0].toUpperCase()}</div>
+      <div className="mb-4 p-4 rounded max-w-sm" style={{background:'#0d1220',border:'1px solid rgba(255,255,255,.06)'}}>
+        <p className="mono text-[10px] text-cyan-400 uppercase tracking-widest mb-3">Compte</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="mono text-xs text-slate-200">{user?.email}</p>
+            <p className="mono text-[10px] text-slate-500 mt-0.5">Plan: Free</p>
           </div>
-        ):(
-          <div className="flex items-center justify-between">
-            <p className="mono text-xs text-slate-400">Mode invité</p>
-            <button onClick={onAuth} className="mono text-xs px-3 py-1.5 rounded font-bold" style={{background:'linear-gradient(135deg,#0077b6,#00b4d8)',color:'#fff'}}>SIGN IN</button>
-          </div>
-        )}
+          <button onClick={onLogout} className="mono text-xs px-3 py-1.5 rounded border border-red-900 text-red-400 hover:bg-red-950/40 transition-colors">
+            Déconnexion
+          </button>
+        </div>
       </div>
       <div className="space-y-2 max-w-sm">
         {[['Sound Alerts','Bip sur les news HIGH impact',al,setAl],['Auto-Refresh','Nouvelle news toutes les 30s',ar,setAr],['Auto Squawk',"Lecture vocale à l'arrivée",sq,setSq]].map(([l,sub,v,s])=>(
@@ -717,11 +820,19 @@ function Settings({user,onAuth}){
           </div>
         ))}
       </div>
+      <div className="mt-6 p-4 rounded max-w-sm" style={{background:'rgba(255,204,0,.05)',border:'1px solid rgba(255,204,0,.15)'}}>
+        <p className="mono text-[10px] text-amber-500 uppercase tracking-widest mb-2">⚠ Disclaimer</p>
+        <p className="mono text-[9px] text-slate-500 leading-relaxed">
+          Les news affichées sont des <span className="text-amber-500">données mockées</span> à des fins de démonstration. 
+          Les graphiques TradingView sont en <span className="text-emerald-400">temps réel</span>. 
+          Les streams TV dépendent de la disponibilité YouTube.
+        </p>
+      </div>
     </div>
   );
 }
 
-// ── CALENDAR WIDGET ──
+// ── CAL WIDGET ──
 function CDWid({time}){const cd=useCountdown(time);return <span className="mono text-[10px] text-cyan-400">{cd}</span>;}
 function CalWidget(){
   return(
@@ -752,16 +863,23 @@ function genNews(){
 }
 
 function App(){
-  const [tab,setTab]=useState('news');
-  const [news,setNews]=useState(NEWS);
-  const [squawk,setSquawk]=useState(false);
   const [user,setUser]=useState(null);
-  const [showAuth,setShowAuth]=useState(false);
+  const [authChecked,setAuthChecked]=useState(false);
+  const [tab,setTab]=useState('news');
+  const [news,setNews]=useState(NEWS_MOCK);
+  const [squawk,setSquawk]=useState(false);
   const sqRef=useRef(false);
 
+  // Vérif session Supabase au démarrage
   useEffect(()=>{
-    sb.auth.getSession().then(({data:{session}})=>{if(session?.user)setUser(session.user);});
-    const{data:l}=sb.auth.onAuthStateChange((_,s)=>setUser(s?.user??null));
+    sb.auth.getSession().then(({data:{session}})=>{
+      setUser(session?.user??null);
+      setAuthChecked(true);
+    });
+    const{data:l}=sb.auth.onAuthStateChange((_,s)=>{
+      setUser(s?.user??null);
+      setAuthChecked(true);
+    });
     return()=>l.subscription.unsubscribe();
   },[]);
 
@@ -783,6 +901,24 @@ function App(){
 
   const logout=async()=>{await sb.auth.signOut();setUser(null);};
 
+  // Loading
+  if(!authChecked){
+    return(
+      <div className="fixed inset-0 flex items-center justify-center" style={{background:'#070910'}}>
+        <div className="flex items-center gap-3">
+          <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full do-spin"/>
+          <span className="mono text-sm text-slate-500">Connexion…</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Auth gate — pas connecté → page de connexion
+  if(!user){
+    return <AuthGate onAuth={setUser}/>;
+  }
+
+  // App principale
   const renderTab=()=>{
     switch(tab){
       case 'news':return <NewsFeed news={news}/>;
@@ -792,14 +928,14 @@ function App(){
       case 'earnings':return <Earnings/>;
       case 'charts':return <Charts/>;
       case 'tv':return <FinancialTV/>;
-      case 'settings':return <Settings user={user} onAuth={()=>setShowAuth(true)}/>;
+      case 'settings':return <Settings user={user} onLogout={logout}/>;
       default:return null;
     }
   };
 
   return(
     <div className="fixed inset-0" style={{background:'#070910',fontFamily:'Syne,sans-serif'}}>
-      <Topbar user={user} onAuth={()=>setShowAuth(true)} onLogout={logout} squawk={squawk} setSquawk={setSquawk}/>
+      <Topbar user={user} onLogout={logout} squawk={squawk} setSquawk={setSquawk}/>
       <Sidebar active={tab} set={setTab}/>
       <main className="fixed top-11 left-14 bottom-0 overflow-hidden" style={{right:tab==='calendar'?0:260}}>
         {renderTab()}
@@ -810,7 +946,6 @@ function App(){
           <CalWidget/>
         </aside>
       )}
-      {showAuth&&<AuthModal onClose={()=>setShowAuth(false)} onAuth={setUser}/>}
     </div>
   );
 }
